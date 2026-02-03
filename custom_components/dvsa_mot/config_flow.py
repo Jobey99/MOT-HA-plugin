@@ -22,7 +22,6 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SCOPE_FALLBACK,
     DEFAULT_BASE_URL,
-    DEFAULT_TOKEN_URL,
 )
 
 
@@ -85,7 +84,7 @@ class DvsaMotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_API_KEY): str,
                 vol.Required(CONF_CLIENT_ID): str,
                 vol.Required(CONF_CLIENT_SECRET): str,
-                vol.Required(CONF_TOKEN_URL, default=DEFAULT_TOKEN_URL): str,
+                vol.Required(CONF_TOKEN_URL): str,
                 vol.Optional(CONF_SCOPE, default=DEFAULT_SCOPE_FALLBACK): str,
                 vol.Required(CONF_REGISTRATIONS, default=""): str,
             }
