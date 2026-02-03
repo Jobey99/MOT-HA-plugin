@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DVSA MOT History API",
+        "description": "Enter your DVSA MOT history API credentials and registrations (comma-separated).",
+        "data": {
+          "api_key": "API key (X-API-Key)",
+          "client_id": "Client ID",
+          "client_secret": "Client secret",
+          "token_url": "Access token URL",
+          "scope": "Scope",
+          "registrations": "Registrations (comma-separated)"
+        }
+      }
+    },
+    "error": {
+      "auth": "Authentication failed. Check client ID/secret, token URL, scope and API key.",
+      "cannot_connect": "Could not connect to the DVSA API."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DVSA MOT options",
+        "data": {
+          "warn_days": "Days before expiry to mark as 'expires_soon'",
+          "scan_interval": "Update interval (seconds)",
+          "base_url": "Base API URL"
+        }
+      }
+    }
+  }
+}

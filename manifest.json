@@ -1,0 +1,10 @@
+{
+  "domain": "dvsa_mot",
+  "name": "DVSA MOT History",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://documentation.history.mot.api.gov.uk/",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.2"
+}
