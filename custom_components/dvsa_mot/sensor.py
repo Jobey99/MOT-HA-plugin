@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -17,56 +18,72 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, CONF_WARN_DAYS, DEFAULT_WARN_DAYS
 
 
-def _parse_date(value: Any) -> Optional[date]:
-    """Parse YYYY-MM-DD into a date."""
+_YMD_RE = re.compile(r"(?P<y>\d{4})[.\-/](?P<m>\d{2})[.\-/](?P<d>\d{2})")
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    """Parse common DVSA-ish datetime/date strings into a datetime."""
     if not value:
         return None
-    if isinstance(value, date) and not isinstance(value, datetime):
+    if isinstance(value, datetime):
         return value
-    if isinstance(value, str):
-        try:
-            return datetime.strptime(value[:10], "%Y-%m-%d").date()
-        except Exception:
-            return None
-    return None
-
-
-def _parse_completed_dt(value: Any) -> Optional[datetime]:
-    """Parse completedDate strings like '2015-03-11 11:41:11'."""
-    if not value or not isinstance(value, str):
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if not isinstance(value, str):
         return None
 
-    v = value.strip()
-    fmts = (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y.%m.%d %H:%M:%S",
-        "%Y-%m-%d",
-        "%Y.%m.%d",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S.%f",
-    )
-    for fmt in fmts:
-        try:
-            return datetime.strptime(v[: len(fmt)], fmt)
-        except Exception:
-            continue
-    return None
+    s = value.strip()
+    if not s:
+        return None
+
+    # Try ISO first (handles 'YYYY-MM-DD', 'YYYY-MM-DDTHH:MM:SS', offsets, etc.)
+    s_iso = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(s_iso)
+    except Exception:
+        pass
+
+    # Fallback: look for YYYY-MM-DD / YYYY.MM.DD / YYYY/MM/DD
+    m = _YMD_RE.search(s)
+    if not m:
+        return None
+    try:
+        y = int(m.group("y"))
+        mo = int(m.group("m"))
+        d = int(m.group("d"))
+        return datetime(y, mo, d)
+    except Exception:
+        return None
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    dt = _parse_dt(value)
+    return dt.date() if dt else None
 
 
 def _sorted_tests(vehicle: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return motTests sorted newest-first by completedDate."""
+    """Return motTests sorted newest-first by completedDate (fallback expiryDate)."""
     mot_tests = vehicle.get("motTests") or []
-    tests: list[dict[str, Any]] = [t for t in mot_tests if isinstance(t, dict)]
+    tests = [t for t in mot_tests if isinstance(t, dict)]
 
     def key(t: dict[str, Any]) -> datetime:
-        dt = _parse_completed_dt(t.get("completedDate") or t.get("completedDateTime"))
-        return dt or datetime.min
+        cd = t.get("completedDate") or t.get("completedDateTime")
+        dt = _parse_dt(cd)
+        if dt:
+            return dt
+        exp = _parse_dt(t.get("expiryDate"))
+        return exp or datetime.min
 
     return sorted(tests, key=key, reverse=True)
 
 
+def _extract_latest_test(vehicle: dict[str, Any]) -> Optional[dict[str, Any]]:
+    tests = _sorted_tests(vehicle)
+    return tests[0] if tests else None
+
+
 def _extract_current_due_date(vehicle: dict[str, Any]) -> Optional[date]:
-    # Prefer top-level due date if present
+    # Prefer top-level due date when present
     due = _parse_date(vehicle.get("motTestDueDate"))
     if due:
         return due
@@ -80,66 +97,58 @@ def _extract_current_due_date(vehicle: dict[str, Any]) -> Optional[date]:
     return best
 
 
-def _extract_latest_test(vehicle: dict[str, Any]) -> Optional[dict[str, Any]]:
-    tests = _sorted_tests(vehicle)
-    return tests[0] if tests else None
-
-
-def _annual_mileage_estimate(vehicle: dict[str, Any]) -> tuple[Optional[float], Optional[str]]:
+def _latest_odometer(vehicle: dict[str, Any]) -> Tuple[Optional[float], Optional[str], Optional[date]]:
     """
-    Estimate annual mileage from last two MOT tests with usable odometer readings.
-
-    Returns (estimate_value, unit) where unit is 'mi' or 'km' (from odometerUnit).
+    Returns (odometer_value, unit, as_of_date) from the latest MOT test entry.
+    unit is typically 'mi' or 'km' when present.
     """
-    tests = _sorted_tests(vehicle)
+    latest = _extract_latest_test(vehicle)
+    if not latest:
+        return None, None, None
 
-    usable: list[tuple[datetime, float, str]] = []
-    for t in tests:
-        dt = _parse_completed_dt(t.get("completedDate") or t.get("completedDateTime"))
-        if not dt:
-            continue
+    odo = latest.get("odometerValue")
+    unit = str(latest.get("odometerUnit") or "").lower().strip() or None
+    as_of = _parse_date(latest.get("completedDate") or latest.get("completedDateTime"))
 
-        # Only use OK readings
-        if str(t.get("odometerResultType") or "").upper() != "OK":
-            continue
+    try:
+        odo_f = float(odo)
+    except Exception:
+        return None, unit, as_of
 
-        odo = t.get("odometerValue")
-        unit = str(t.get("odometerUnit") or "").lower().strip()
-        if unit not in ("mi", "km"):
-            continue
-        try:
-            odo_f = float(odo)
-        except Exception:
-            continue
+    return odo_f, unit, as_of
 
-        usable.append((dt, odo_f, unit))
-        if len(usable) >= 2:
-            break
 
-    if len(usable) < 2:
-        return None, None
+def _avg_annual_since_registration(vehicle: dict[str, Any]) -> Tuple[Optional[float], Optional[str], dict[str, Any]]:
+    """
+    Average annual mileage since registration:
+      latest MOT odometer / (years since registration)
 
-    (d1, o1, u1), (d2, o2, u2) = usable[0], usable[1]
+    Returns (avg_value, unit, debug_attrs)
+    """
+    reg_date = _parse_date(vehicle.get("registrationDate"))
+    odo, unit, odo_as_of = _latest_odometer(vehicle)
 
-    # If units differ between tests, skip (rare, but possible)
-    if u1 != u2:
-        return None, None
+    dbg: dict[str, Any] = {
+        "registration_date": reg_date.isoformat() if reg_date else None,
+        "odometer": odo,
+        "odometer_unit": unit,
+        "odometer_as_of": odo_as_of.isoformat() if odo_as_of else None,
+    }
 
-    days = (d1 - d2).days
+    if not reg_date or odo is None:
+        return None, unit, dbg
+
+    days = (date.today() - reg_date).days
     if days <= 0:
-        return None, None
+        return None, unit, dbg
 
-    delta = o1 - o2
-    if delta <= 0:
-        # no increase or decrease: could be clocking, odometer reset, or data issues
-        return None, u1
-
-    estimate = (delta / days) * 365.25
-    return estimate, u1
+    years = days / 365.25
+    avg = odo / years
+    return avg, unit, dbg
 
 
 SENSORS: tuple[SensorEntityDescription, ...] = (
-    # Existing
+    # Core MOT
     SensorEntityDescription(
         key="due_date",
         name="MOT due date",
@@ -169,7 +178,7 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         name="Vehicle",
     ),
 
-    # New: metadata
+    # Metadata
     SensorEntityDescription(
         key="engine_size",
         name="Engine size",
@@ -199,10 +208,15 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DATE,
     ),
 
-    # New: estimated annual mileage (unit is dynamic; we’ll expose unit in attributes too)
+    # History / computed
     SensorEntityDescription(
-        key="annual_mileage_estimate",
-        name="Estimated annual mileage",
+        key="mot_test_count",
+        name="MOT test count",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="avg_annual_mileage_since_registration",
+        name="Average annual mileage since registration",
         state_class=SensorStateClass.MEASUREMENT,
     ),
 )
@@ -258,7 +272,6 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
 
         due = _extract_current_due_date(data)
         latest = _extract_latest_test(data)
-
         warn_days = int(self._entry.options.get(CONF_WARN_DAYS, DEFAULT_WARN_DAYS))
         today = date.today()
         k = self.entity_description.key
@@ -284,8 +297,8 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
         if k == "last_test_date":
             if not latest:
                 return None
-            dt = _parse_completed_dt(latest.get("completedDate") or latest.get("completedDateTime"))
-            return dt.date() if dt else None
+            dt = _parse_date(latest.get("completedDate") or latest.get("completedDateTime"))
+            return dt
 
         if k == "make_model":
             mk = data.get("make")
@@ -294,7 +307,6 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
                 return f"{mk} {md}"
             return mk or md
 
-        # Metadata sensors
         if k == "engine_size":
             v = data.get("engineSize")
             try:
@@ -317,12 +329,13 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
         if k == "manufacture_date":
             return _parse_date(data.get("manufactureDate"))
 
-        # Annual mileage estimate
-        if k == "annual_mileage_estimate":
-            est, _unit = _annual_mileage_estimate(data)
-            if est is None:
-                return None
-            return round(est, 0)
+        if k == "mot_test_count":
+            tests = data.get("motTests") or []
+            return len(tests) if isinstance(tests, list) else None
+
+        if k == "avg_annual_mileage_since_registration":
+            avg, _unit, _dbg = _avg_annual_since_registration(data)
+            return round(avg, 0) if avg is not None else None
 
         return None
 
@@ -334,9 +347,10 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
 
         due = _extract_current_due_date(data)
         latest = _extract_latest_test(data)
-        est, est_unit = _annual_mileage_estimate(data)
+        odo, odo_unit, odo_as_of = _latest_odometer(data)
+        avg, avg_unit, avg_dbg = _avg_annual_since_registration(data)
 
-        attrs = {
+        attrs: dict[str, Any] = {
             "registration": data.get("registration") or self._reg,
             "make": data.get("make"),
             "model": data.get("model"),
@@ -348,11 +362,16 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
             "manufactureDate": data.get("manufactureDate"),
             "mot_due_date": due.isoformat() if due else None,
             "hasOutstandingRecall": data.get("hasOutstandingRecall"),
-            "annual_mileage_estimate_unit": (f"{est_unit}/yr" if est_unit else None),
+            "latest_odometer": odo,
+            "latest_odometer_unit": odo_unit,
+            "latest_odometer_as_of": odo_as_of.isoformat() if odo_as_of else None,
         }
 
-        if est is not None and est_unit is not None:
-            attrs["annual_mileage_estimate_raw"] = est
+        if avg is not None:
+            # Unit shown as an attribute to avoid dynamic HA unit complications
+            if avg_unit:
+                attrs["avg_annual_mileage_unit"] = f"{avg_unit}/yr"
+            attrs["avg_annual_mileage_raw"] = avg_dbg
 
         if latest:
             attrs.update(
