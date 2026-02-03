@@ -1,6 +1,6 @@
 # DVSA MOT History (Home Assistant)
 
-This is a Home Assistant custom integration that pulls vehicle MOT information from the DVSA MOT History API (the “new API” at history.mot.api.gov.uk). It uses OAuth2 client credentials to obtain an access token and then queries the vehicle record by registration.
+This is a Home Assistant custom integration that pulls vehicle MOT information from the DVSA MOT History API. It uses OAuth2 client credentials to obtain an access token and then queries the vehicle record by registration.
 
 The integration creates sensors for each configured registration, including MOT due date, days remaining, and a simple status value you can use for automations.
 
