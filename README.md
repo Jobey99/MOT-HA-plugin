@@ -38,6 +38,11 @@ Note: if an API key is not used for 90 days it may be automatically revoked, and
 5. Install the integration from HACS.
 6. Restart Home Assistant.
 
+
+## HACS install link
+
+[Open this repository in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jobey99&repository=MOT-HA-plugin&category=integration)
+
 ## Manual installation
 
 1. Copy `custom_components/dvsa_mot` into your Home Assistant config directory at:
@@ -85,7 +90,3 @@ You can adjust options under the integration’s Options menu:
 
 - Check Home Assistant logs for `dvsa_mot` to see authentication or API errors.
 - If entities appear as unavailable, confirm the credentials can retrieve a token and that the API key is valid for the endpoint being called.
-
-## HACS install link
-
-[Open this repository in HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=Jobey99&repository=MOT-HA-plugin&category=integration)
