@@ -1,9 +1,4 @@
-from __future__ import annotations
-
-from homeassistant.const import Platform
-
 DOMAIN = "dvsa_mot"
-PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 CONF_API_KEY = "api_key"
 CONF_CLIENT_ID = "client_id"
@@ -14,8 +9,11 @@ CONF_REGISTRATIONS = "registrations"
 
 CONF_WARN_DAYS = "warn_days"
 CONF_SCAN_INTERVAL = "scan_interval"
+CONF_BASE_URL = "base_url"
 
 DEFAULT_WARN_DAYS = 30
-DEFAULT_SCAN_INTERVAL = 6 * 60 * 60  # seconds
+# seconds
+DEFAULT_SCAN_INTERVAL = 6 * 60 * 60  # 6 hours
+
 DEFAULT_SCOPE_FALLBACK = "https://tapi.dvsa.gov.uk/.default"
 DEFAULT_BASE_URL = "https://history.mot.api.gov.uk"
