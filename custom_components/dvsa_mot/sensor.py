@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Optional
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -27,10 +30,12 @@ def _parse_date(value: Any) -> Optional[date]:
 
 
 def _extract_current_due_date(vehicle: dict[str, Any]) -> Optional[date]:
+    # Prefer top-level due date when present
     due = _parse_date(vehicle.get("motTestDueDate"))
     if due:
         return due
 
+    # Fallback: newest expiry date from motTests
     mot_tests = vehicle.get("motTests") or []
     best: Optional[date] = None
     for t in mot_tests:
@@ -51,21 +56,34 @@ def _extract_latest_test(vehicle: dict[str, Any]) -> Optional[dict[str, Any]]:
     return sorted(mot_tests, key=key, reverse=True)[0]
 
 
-@dataclass(frozen=True)
-class MotSensorDescription:
-    key: str
-    name_suffix: str
-    device_class: SensorDeviceClass | None = None
-
-
-SENSORS: list[MotSensorDescription] = [
-    MotSensorDescription("due_date", "MOT due date", SensorDeviceClass.DATE),
-    MotSensorDescription("days_remaining", "MOT days remaining"),
-    MotSensorDescription("status", "MOT status"),
-    MotSensorDescription("last_result", "Last MOT result"),
-    MotSensorDescription("last_test_date", "Last MOT test date", SensorDeviceClass.DATE),
-    MotSensorDescription("make_model", "Vehicle"),
-]
+SENSORS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="due_date",
+        name="MOT due date",
+        device_class=SensorDeviceClass.DATE,
+    ),
+    SensorEntityDescription(
+        key="days_remaining",
+        name="MOT days remaining",
+    ),
+    SensorEntityDescription(
+        key="status",
+        name="MOT status",
+    ),
+    SensorEntityDescription(
+        key="last_result",
+        name="Last MOT result",
+    ),
+    SensorEntityDescription(
+        key="last_test_date",
+        name="Last MOT test date",
+        device_class=SensorDeviceClass.DATE,
+    ),
+    SensorEntityDescription(
+        key="make_model",
+        name="Vehicle",
+    ),
+)
 
 
 async def async_setup_entry(
@@ -84,16 +102,15 @@ async def async_setup_entry(
 
 
 class DvsaMotSensor(CoordinatorEntity, SensorEntity):
-    _attr_has_entity_name = True
-
-    def __init__(self, entry: ConfigEntry, coordinator, reg: str, desc: MotSensorDescription) -> None:
+    def __init__(self, entry: ConfigEntry, coordinator, reg: str, desc: SensorEntityDescription) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self.coordinator = coordinator
         self._reg = reg
         self.entity_description = desc
+
         self._attr_unique_id = f"{entry.entry_id}_{reg}_{desc.key}"
-        self._attr_name = f"{reg} {desc.name_suffix}"
+        # Include reg in the entity name so multiple vehicles don’t collide
+        self._attr_name = f"{reg} {desc.name}"
         self._attr_device_class = desc.device_class
 
     @property
@@ -122,10 +139,10 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
 
         warn_days = int(self._entry.options.get(CONF_WARN_DAYS, DEFAULT_WARN_DAYS))
         today = date.today()
-
         k = self.entity_description.key
+
         if k == "due_date":
-            return due if due else None
+            return due  # date object
 
         if k == "days_remaining":
             return (due - today).days if due else None
@@ -147,10 +164,9 @@ class DvsaMotSensor(CoordinatorEntity, SensorEntity):
                 return None
             cd = latest.get("completedDate") or latest.get("completedDateTime")
             if isinstance(cd, str) and cd:
-                # Try common formats
                 for fmt in ("%Y-%m-%d", "%Y.%m.%d", "%Y-%m-%d %H:%M:%S", "%Y.%m.%d %H:%M:%S"):
                     try:
-                        return datetime.strptime(cd[:len(fmt)], fmt).date()
+                        return datetime.strptime(cd[: len(fmt)], fmt).date()
                     except Exception:
                         continue
             return None
