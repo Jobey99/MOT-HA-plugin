@@ -1,5 +1,5 @@
 {
   "name": "DVSA MOT History",
-  "content_in_root": false,
+  "content_in_root": true,
   "domains": ["dvsa_mot"]
 }
