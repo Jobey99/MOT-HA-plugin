@@ -26,7 +26,7 @@ from .const import (
 
 
 def _parse_regs(text: str) -> list[str]:
-    regs = []
+    regs: list[str] = []
     for part in text.replace(";", ",").split(","):
         r = part.strip().replace(" ", "").upper()
         if r:
@@ -44,12 +44,13 @@ async def _validate(hass: HomeAssistant, data: dict) -> None:
         token_url=data[CONF_TOKEN_URL],
         scope=data[CONF_SCOPE],
         base_url=DEFAULT_BASE_URL,
-    DEFAULT_TOKEN_URL,
     )
+
     regs: list[str] = data[CONF_REGISTRATIONS]
     if regs:
         await client.vehicle_by_registration(regs[0])
     else:
+        # Force token fetch to validate auth even if no reg supplied
         await client._get_token()  # type: ignore[attr-defined]
 
 
@@ -57,7 +58,8 @@ class DvsaMotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None) -> FlowResult:
-        errors = {}
+        errors: dict[str, str] = {}
+
         if user_input is not None:
             regs = _parse_regs(user_input[CONF_REGISTRATIONS])
             data = {
@@ -68,6 +70,7 @@ class DvsaMotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCOPE: (user_input.get(CONF_SCOPE) or DEFAULT_SCOPE_FALLBACK).strip(),
                 CONF_REGISTRATIONS: regs,
             }
+
             try:
                 await _validate(self.hass, data)
             except MotAuthError:
@@ -84,11 +87,12 @@ class DvsaMotConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_API_KEY): str,
                 vol.Required(CONF_CLIENT_ID): str,
                 vol.Required(CONF_CLIENT_SECRET): str,
-                vol.Required(CONF_TOKEN_URL): str,
+                vol.Required(CONF_TOKEN_URL): str,  # no default hardcoded
                 vol.Optional(CONF_SCOPE, default=DEFAULT_SCOPE_FALLBACK): str,
-                vol.Required(CONF_REGISTRATIONS, default=""): str,
+                vol.Required(CONF_REGISTRATIONS, default=""): str,  # comma-separated
             }
         )
+
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     @staticmethod
@@ -106,9 +110,19 @@ class DvsaMotOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_WARN_DAYS, default=self.entry.options.get(CONF_WARN_DAYS, DEFAULT_WARN_DAYS)): vol.Coerce(int),
-                vol.Optional(CONF_SCAN_INTERVAL, default=self.entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)): vol.Coerce(int),
-                vol.Optional("base_url", default=self.entry.options.get("base_url", DEFAULT_BASE_URL)): str,
+                vol.Optional(
+                    CONF_WARN_DAYS,
+                    default=self.entry.options.get(CONF_WARN_DAYS, DEFAULT_WARN_DAYS),
+                ): vol.Coerce(int),
+                vol.Optional(
+                    CONF_SCAN_INTERVAL,
+                    default=self.entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): vol.Coerce(int),
+                vol.Optional(
+                    "base_url",
+                    default=self.entry.options.get("base_url", DEFAULT_BASE_URL),
+                ): str,
             }
         )
+
         return self.async_show_form(step_id="init", data_schema=schema)
